@@ -34,34 +34,20 @@ int close_socket(int sock)
 
 int main(int argc, char* argv[])
 {
-    int sock, client_sock;
+    int sock;
     ssize_t readret;
     socklen_t cli_size;
     struct sockaddr_in addr, cli_addr;
     char buf[BUF_SIZE];
 
-    // try stuff
-    fd_set master;    // master file descriptor list
-    fd_set read_fds;  // temp file descriptor list for select()
-    int fdmax;        // maximum file descriptor number
-    int newfd;        // newly accept()ed socket descriptor
-//    struct sockaddr_storage remoteaddr; // client address
-    //socklen_t addrlen;
-
+    fd_set master; // Set of all file descriptors
+    fd_set read_fds; // Temporary file descriptor list for select
+    int fdmax; // maximum file descriptor number
+    int newfd;        // newly accept()ed socket descriptor for client
     int i;
-
-
-    //struct addrinfo hints, *ai, *p;
 
     FD_ZERO(&master);    // clear the master and temp sets
     FD_ZERO(&read_fds);
-
-
-//    // listen
-//    if (listen(listener, 10) == -1) {
-//        perror("listen");
-//        exit(3);
-//    }
 
     fprintf(stdout, "----- Echo Server -----\n");
 
@@ -72,8 +58,7 @@ int main(int argc, char* argv[])
         return EXIT_FAILURE;
     }
 
-
-    // addr = hints
+    // Bind socket
     addr.sin_family = AF_INET;
     addr.sin_port = htons(ECHO_PORT);
     addr.sin_addr.s_addr = INADDR_ANY;
@@ -95,60 +80,39 @@ int main(int argc, char* argv[])
         return EXIT_FAILURE;
     }
 
-
-
-    // /////
-    // ///
-    // add the listener to the master set
+    // add the listener socket to the master set
     FD_SET(sock, &master);
 
-    // keep track of the biggest file descriptor
+    // keep track of the largest file descriptor
     fdmax = sock; // so far, it's this one
-
-
-    //
-
 
 
     /* finally, loop waiting for input and then write it back */
     while (1) {
-       //cli_size = sizeof(cli_addr);
 
-
-        // ///////
+        // Select from possible file descriptors
         read_fds = master;
         if (select(fdmax+1, &read_fds, NULL, NULL, NULL) == -1) {
             perror("select error\n");
             exit(4);
         }
+
         // OS accepts client and gives it a socket
-//       if ((client_sock = accept(sock, (struct sockaddr *) &cli_addr,
-//                                 &cli_size)) == -1)
-//       {
-//           close(sock);
-//           fprintf(stderr, "Error accepting connection.\n");
-//           return EXIT_FAILURE;
-//       }
-       
-       readret = 0;
-        //select!
-        // ///////
+
         for (i=0; i <= fdmax; i++) {
             // Code inspired by Beej guide
             if (FD_ISSET(i, &read_fds)) { // Connection made
                 if (i == sock) {
                     cli_size = sizeof(cli_addr);
                     newfd = accept(sock, (struct sockaddr *) &cli_addr, &cli_size);
-                    fprintf(stdout, "newfd iz: %d \n", newfd);
                     if (newfd == -1) {
                         perror("accept issue\n");
                     } else {
                         FD_SET(newfd, &master); // add to master set
                         if (newfd > fdmax) {
                             fdmax = newfd;
-                            fprintf(stdout, "NEW FDMAX: %d \n", fdmax);
                         }
-                        printf("hiii. new connection\n");
+                        fprintf(stdout, "New cxn in socket %d\n", newfd);
                     }
                 } else {
                     // Data from client
@@ -156,21 +120,20 @@ int main(int argc, char* argv[])
                     if ((readret = recv(i, buf, BUF_SIZE, 0)) <= 0) {
                         if (readret < 0) {
                             // Connection closed
-                            perror("recv error");
+                            perror("recv error\n");
                         }
                         close(i);
                         FD_CLR(i, &master);
 
-                        } else {
-                            // Received data from a client
-                            if (FD_ISSET(i, &master)) {
-                                // Print i
-                                fprintf(stdout, "Data from socket %d \n",i);
-                                if (send(i, buf, readret, 0) != readret) {
-                                    perror("send error\n");
-                                }
+                    } else {
+                        // Received data from a client
+                        if (FD_ISSET(i, &master)) {
+                            fprintf(stdout, "Data received from socket %d \n",i);
+                            if (send(i, buf, readret, 0) != readret) {
+                                perror("send error\n");
                             }
                         }
+                    }
                 }
             }
         }
