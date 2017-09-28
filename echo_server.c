@@ -18,9 +18,18 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include "parse.h"
+
+
+#include <arpa/inet.h>
+
+
 
 #define ECHO_PORT 9999
 #define BUF_SIZE 4096
+
+
+void handle_requests(int i, Request *request);
 
 
 int close_socket(int sock)
@@ -128,10 +137,14 @@ int main(int argc, char* argv[])
                     } else {
                         // Received data from a client
                         if (FD_ISSET(i, &master)) {
-                            fprintf(stdout, "Data received from socket %d \n",i);
+//                            fprintf(stdout, "Data received from socket %d. He said %s \n", i, buf);
+                            Request *request = parse(buf, readret, i);
+                            handle_requests(i, request);
+//                            fprintf(stdout, "Request is %s \n", request->http_method);
                             if (send(i, buf, readret, 0) != readret) {
                                 perror("send error\n");
                             }
+
                         }
                     }
                 }
@@ -143,3 +156,17 @@ int main(int argc, char* argv[])
 
     return EXIT_SUCCESS;
 }
+
+
+void handle_requests(int i, Request *request) {
+    if (!strcasecmp(request->http_method, "GET")) {
+        fprintf(stdout, "You (%d) said %s \n", i, request->http_method);
+    } else if (!strcasecmp(request->http_method, "HEAD")) {
+        fprintf(stdout, "You (%d) said %s \n", i, request->http_method);
+    } else if (!strcasecmp(request->http_method, "POST")) {
+        fprintf(stdout, "You (%d) said %s \n", i, request->http_method);
+    } else {
+        fprintf(stdout, "501 Not Implemented HTTP method is not implemented by the server\n");
+    }
+};
+
