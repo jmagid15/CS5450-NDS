@@ -28,40 +28,33 @@
 #include <fcntl.h>
 
 
-#define ECHO_PORT 9999
+//#define ECHO_PORT 9999
 #define BUF_SIZE 4096
 #define ARGNUM 3
 
-void handle_requests(int i, Request *request);
+// Headers
+int handle_requests(int i, Request *request);
 void doPOST(int i, Request *request);
-void doHEAD(int i, Request *request);
-void doGET(int i, Request *request);
+int doHEAD(int i, Request *request);
+int doGET(int i, Request *request);
 void argError();
 void getContentType(char *file_string, char *content_type);
 void get_time(char *date);
 void addToLog(char *logfilename, char *msg);
 void handleError(int fd, int error_num, Request *request);
-
+void *get_in_addr(struct sockaddr *sa);
 
 //#define PORT "9999"   // port we're listening on
 
+// Globally accessible variables
 char *filePath;
+char *logfilename;
 
-// get sockaddr, IPv4 or IPv6:
-void *get_in_addr(struct sockaddr *sa)
-{
-    if (sa->sa_family == AF_INET) {
-        return &(((struct sockaddr_in*)sa)->sin_addr);
-    }
-
-    return &(((struct sockaddr_in6*)sa)->sin6_addr);
-}
-
-
+// Main function
 int main(int argc, char* argv[]) {
 
-    char* logfilename = "log.txt";
-    addToLog(logfilename, "Hello there!\n");
+    logfilename = "log.txt";
+    //addToLog(logfilename, "Hello there!\n");
 
     fd_set master;    // master file descriptor list
     fd_set read_fds;  // temp file descriptor list for select()
@@ -85,14 +78,14 @@ int main(int argc, char* argv[]) {
     char *PORT;
     PORT = argv[1];
 
-    filePath = argv[3];
+    filePath = "www"; //argv[3];
 
 //    char logfile;
 //    logfile = argv[2];
 
-    if (argc != ARGNUM + 1) {
-        argError();
-    }
+//    if (argc != ARGNUM + 1) {
+//        argError();
+//    }
 
     FD_ZERO(&master);    // clear the master and temp sets
     FD_ZERO(&read_fds);
@@ -137,6 +130,8 @@ int main(int argc, char* argv[]) {
         perror("listen");
         exit(3);
     }
+
+    fprintf(stdout, "----------Liso Server---------\n");
 
     // add the listener to the master set
     FD_SET(listen_sock, &master);
@@ -185,20 +180,19 @@ int main(int argc, char* argv[]) {
                         close(i); // bye!
                         FD_CLR(i, &master); // remove from master set
                     } else {
-                        if (FD_ISSET(i, &master)) {
-                            //fprintf(stdout, "Data received from socket %d. He said %s \n", i, buf);
+//                        if (FD_ISSET(i, &master)) {
+                        //fprintf(stdout, "Data received from socket %d. He said %s \n", i, buf);
 
-                            // Parse Request
-                            Request *request = parse(buf, nbytes, i);
+                        // Parse Request
+                        Request *request = parse(buf, nbytes, i);
 
-                            // Handle Request
-                            handle_requests(i, request);
-
-                            //fprintf(stdout, "Request is %s \n", request->http_method);
-                            if (send(i, buf, sizeof(buf), 0) != sizeof(buf)) {
-                                perror("send error\n");
-                            }
+                        // Handle Request
+                        if (handle_requests(i, request) < 0) {
+                            close(i);
+                            FD_CLR(i, &master);
                         }
+
+//                        }
                     }
                 }
             }
@@ -207,54 +201,69 @@ int main(int argc, char* argv[]) {
     return EXIT_SUCCESS;
 }
 
-void handle_requests(int i, Request *request) {
-    if (!strcasecmp(request->http_method, "GET")) {
-        fprintf(stdout, "You (%d) said %s \n", i, request->http_method);
-        doGET(i, request);
-        return;
-    } else if (!strcasecmp(request->http_method, "HEAD")) {
-        fprintf(stdout, "You (%d) said %s \n", i, request->http_method);
-        doHEAD(i, request);
-        return;
-    } else if (!strcasecmp(request->http_method, "POST")) {
-        fprintf(stdout, "You (%d) said %s \n", i, request->http_method);
-        doPOST(i, request);
-        return;
+
+int handle_requests(int i, Request *request) {
+    if (!strcasecmp(request->http_version, "HTTP/1.1")) {
+        if (!strcasecmp(request->http_method, "GET")) {
+            fprintf(stdout, "You (%d) said %s \n", i, request->http_method);
+            if (doGET(i, request) < 0) {
+                return -1;
+            }
+            return 1;
+        } else if (!strcasecmp(request->http_method, "HEAD")) {
+            fprintf(stdout, "You (%d) said %s \n", i, request->http_method);
+            if (doHEAD(i, request) < 0) {
+                return -1;
+            }
+            return 1;
+        } else if (!strcasecmp(request->http_method, "POST")) {
+            fprintf(stdout, "You (%d) said %s \n", i, request->http_method);
+            doPOST(i, request);
+            return 1;
+        } else {
+            fprintf(stdout, "501 Not Implemented HTTP method is not implemented by the server\n");
+            handleError(i, 501, request);
+            return 1;
+        }
     } else {
-        fprintf(stdout, "501 Not Implemented HTTP method is not implemented by the server\n");
-        handleError(i, 501, request);
-        return;
+        fprintf(stdout, "505 HTTP version is not supported by the server\n");
+        handleError(i, 505, request);
+        return 1;
     }
 }
 
 
-void doGET(int i, Request *request) {
+int doGET(int i, Request *request) {
     struct stat fileinfo;
     char fullPath[256];
     char *filePtr;
     int fd, filesize;
 
-    // send
-    doHEAD(i, request);
-
 
     // Decide which path to look at
     if (!strcmp(request->http_uri, "/")) {
-        snprintf(fullPath, sizeof fullPath, "%s%s", filePath, "/index.html");
+        sprintf(fullPath, "%s%s", filePath, "/index.html");
     } else {
-        snprintf(fullPath, sizeof fullPath, "%s%s", filePath, request->http_uri);
+        sprintf(fullPath, "%s%s", filePath, request->http_uri);
+    }
+
+    // Try to open the file. Print error and add to log if fail.
+    fd = open(fullPath, O_RDONLY, 0);
+    if (fd < 0) {
+        handleError(i, 404, request);
+        addToLog(logfilename, "Error: Can't open file \n");
+        return -1;
     }
 
     // Get file info (content-length, last modified)
     stat(fullPath, &fileinfo);
+
     // Set filesize
     filesize = fileinfo.st_size;
 
-    // Try to open the file. Print error and add to log if fail.
-    if ((fd = open(fullPath, O_RDONLY, 0)) < 0)
-    {
-        addToLog(filePath, "Error: Can't open file \n");
-        fprintf(stdout, "Badd stuff happened\n");
+    // Send headers
+    if (doHEAD(i, request) < 0) {
+        return -1;
     }
 
     // Create pointer of file contents using memory map
@@ -267,11 +276,11 @@ void doGET(int i, Request *request) {
     // Memory unmap to reclaim space.
     munmap(filePtr, filesize);
 
-
+    return 1;
 }
 
 
-void doHEAD(int i, Request *request) {
+int doHEAD(int i, Request *request) {
     char respBuf[8192];
     char date[35];
     char content_type[1024];
@@ -281,9 +290,18 @@ void doHEAD(int i, Request *request) {
 
     // Decide which path to look at
     if (!strcmp(request->http_uri, "/")) {
-        snprintf(fullPath, sizeof fullPath, "%s%s", filePath, "/index.html");
+        sprintf(fullPath, "%s%s", filePath, "/index.html");
     } else {
-        snprintf(fullPath, sizeof fullPath, "%s%s", filePath, request->http_uri);
+        sprintf(fullPath, "%s%s", filePath, request->http_uri);
+    }
+
+    // Check if file exists
+    int fd;
+    fd = open(fullPath, O_RDONLY, 0);
+    if (fd < 0) {
+        handleError(i, 404, request);
+        addToLog(logfilename, "Error: Can't open file \n");
+        return -1;
     }
 
     // Get file info (content-length, last modified)
@@ -309,13 +327,18 @@ void doHEAD(int i, Request *request) {
     sprintf(respBuf, "HTTP/1.1 200 OK\r\n");
     sprintf(respBuf + strlen(respBuf), "Server: Liso/1.0\r\n");
     sprintf(respBuf + strlen(respBuf), "Date: %s\r\n", date);
+    sprintf(respBuf + strlen(respBuf), "Connection: keep-alive\r\n");
     sprintf(respBuf + strlen(respBuf), "Content-type: %s\r\n", content_type);
     sprintf(respBuf + strlen(respBuf), "Content-length: %lld\r\n", fileinfo.st_size);
-    sprintf(respBuf + strlen(respBuf), "Last-modified: %s\r\n", lastModTime);
+    sprintf(respBuf + strlen(respBuf), "Last-modified: %s\r\n\r\n", lastModTime);
 
     send(i, respBuf, strlen(respBuf), 0);
 
+    close(fd);
+
+    return 1;
 }
+
 
 void getContentType(char *file_string, char *content_type) {
     if (strstr(file_string, ".html"))
@@ -380,6 +403,7 @@ void get_time(char *date){
     strftime(date, 35, "%a, %d %b %Y %H:%M:%S GMT", &tm);
 }
 
+
 void argError(void) {
     fprintf(stderr, "usage: ./echo_server <HTTP port> <log file> <www folder>\n");
     exit(EXIT_FAILURE);
@@ -392,7 +416,8 @@ void handleError(int fd, int error_num, Request *request) {
     char error_buf[1024];
     char out[1024];
     get_time(date);
-    // get the message based on the id
+
+    // Get message based on error id
     switch(error_num) {
         case 400:
             sprintf(out, "Bad Request. \n");
@@ -411,10 +436,9 @@ void handleError(int fd, int error_num, Request *request) {
             break;
         default:
             sprintf(out, "Unknown Error.\n");
+            break;
     }
-//    if(is_closed)
-//        sprintf(output,"Connection is closed.\n");
-    // build buffer and send to client
+
     sprintf(error_buf, "%s %d %s\r\n", request->http_version, error_num, out);
     sprintf(error_buf, "%sServer: Liso/1.0\r\n", error_buf);
     sprintf(error_buf, "%sDate: %s\r\n", error_buf, date);
@@ -422,4 +446,13 @@ void handleError(int fd, int error_num, Request *request) {
     sprintf(error_buf, "%sContent-Type: text/html\r\n\r\n", error_buf);
     send(fd, error_buf, strlen(error_buf), 0);
     fprintf(stdout, "ERROR sent to the Client!\n");
+}
+
+// get sockaddr, IPv4 or IPv6:
+void *get_in_addr(struct sockaddr *sa) {
+    if (sa->sa_family == AF_INET) {
+        return &(((struct sockaddr_in*)sa)->sin_addr);
+    }
+
+    return &(((struct sockaddr_in6*)sa)->sin6_addr);
 }
