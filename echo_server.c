@@ -1,14 +1,17 @@
 /******************************************************************************
 * echo_server.c                                                               *
 *                                                                             *
-* Description: This file contains the C source code for an echo server.  The  *
-*              server runs on a hard-coded port and simply write back anything*
-*              sent to it by connected clients.  It does not support          *
-*              concurrent clients.                                            *
+* Description: This file contains the C source code for the HTTP 1.1 server   *
+*              implemented for Project 1 of Cornell Tech's Networked and      *
+*              Distributed Systems course (CS5450). The select-based server   *
+*              can handle multiple clients and can serve static files using   *
+*              GET, HEAD, and POST requests.                                  *
 *                                                                             *
-* Authors: Athula Balachandran <abalacha@cs.cmu.edu>,                         *
-*          Wolf Richter <wolf@cs.cmu.edu>                                     *
+* Authors: Jake Magid <jm2644@cornell.edu>,                                   *
+*          Fani Maksakuli <fm399@cornell.edu>                                 *
 *                                                                             *
+* Original Template: Athula Balachandran <abalacha@cs.cmu.edu>,               *
+*                    Wolf Richter <wolf@cs.cmu.edu>                           *
 *******************************************************************************/
 
 #include <netinet/in.h>
@@ -28,7 +31,6 @@
 #include <fcntl.h>
 
 
-//#define ECHO_PORT 9999
 #define BUF_SIZE 4096
 #define ARGNUM 3
 
@@ -44,7 +46,6 @@ void addToLog(char *logfilename, char *msg);
 void handleError(int fd, int error_num, Request *request);
 void *get_in_addr(struct sockaddr *sa);
 
-//#define PORT "9999"   // port we're listening on
 
 // Globally accessible variables
 char *filePath;
@@ -53,50 +54,48 @@ char *logfilename;
 // Main function
 int main(int argc, char* argv[]) {
 
-    logfilename = "log.txt";
-    //addToLog(logfilename, "Hello there!\n");
+    logfilename = "log.txt"; //logfilename = argv[2];
 
-    fd_set master;    // master file descriptor list
-    fd_set read_fds;  // temp file descriptor list for select()
-    int fdmax;        // maximum file descriptor number
+    fd_set masterFDlist; // Master file descriptor list
+    fd_set readFDs; // Temporary file descriptor list for select()
+    int fdMax; // Maximum file descriptor number
 
-    int listen_sock;     // listening socket descriptor
-    int newfd;        // newly accept()ed socket descriptor
-    struct sockaddr_storage remoteaddr; // client address
-    socklen_t addrlen;
+    int listen_sock; // Server listening socket file descriptor
+    int newFD; // New file descriptor
+    struct sockaddr_storage clientAddr; // Client remote address
+    socklen_t addrLen;
 
-    char buf[8192];    // buffer for client data
-    int nbytes;
+    char buf[8192];
+    int retBytes;
 
     char remoteIP[INET6_ADDRSTRLEN];
 
-    int yes = 1;        // for setsockopt() SO_REUSEADDR, below
+    int yes = 1;
     int i, rv;
 
-    struct addrinfo hints, *ai, *p;
+    struct addrinfo addrStruct, *ai, *p;
 
     char *PORT;
     PORT = argv[1];
 
-    filePath = "www"; //argv[3];
+    filePath = "www"; //filePath = argv[3];
 
-//    char logfile;
-//    logfile = argv[2];
+    // Usage error to control number of arguments passed in
+    // Commented out for use with autograder
+    //    if (argc != ARGNUM + 1) {
+    //        argError();
+    //    }
 
-//    if (argc != ARGNUM + 1) {
-//        argError();
-//    }
+    FD_ZERO(&masterFDlist);
+    FD_ZERO(&readFDs);
 
-    FD_ZERO(&master);    // clear the master and temp sets
-    FD_ZERO(&read_fds);
-
-    // get us a socket and bind it
-    memset(&hints, 0, sizeof hints);
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = AI_PASSIVE;
-    if ((rv = getaddrinfo(NULL, PORT, &hints, &ai)) != 0) {
-        fprintf(stderr, "selectserver: %s\n", gai_strerror(rv));
+    // Bind  get us a socket and bind it
+    memset(&addrStruct, 0, sizeof addrStruct);
+    addrStruct.ai_family = AF_UNSPEC;
+    addrStruct.ai_socktype = SOCK_STREAM;
+    addrStruct.ai_flags = AI_PASSIVE;
+    if ((rv = getaddrinfo(NULL, PORT, &addrStruct, &ai)) != 0) {
+        fprintf(stderr, "Liso: %s\n", gai_strerror(rv));
         exit(1);
     }
 
@@ -106,26 +105,25 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
-        // lose the pesky "address already in use" error message
+        // Take care of "address already in use" error message
         setsockopt(listen_sock, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int));
 
         if (bind(listen_sock, p->ai_addr, p->ai_addrlen) < 0) {
             close(listen_sock);
             continue;
         }
-
         break;
     }
 
-    // if we got here, it means we didn't get bound
+    // Failed to bind
     if (p == NULL) {
-        fprintf(stderr, "selectserver: failed to bind\n");
+        fprintf(stderr, "Liso: Failed to bind\n");
         exit(2);
     }
 
-    freeaddrinfo(ai); // all done with this
+    freeaddrinfo(ai);
 
-    // listen
+    // Listen
     if (listen(listen_sock, 10) == -1) {
         perror("listen");
         exit(3);
@@ -133,66 +131,66 @@ int main(int argc, char* argv[]) {
 
     fprintf(stdout, "----------Liso Server---------\n");
 
-    // add the listener to the master set
-    FD_SET(listen_sock, &master);
+    // Add the listener socket to the master set
+    FD_SET(listen_sock, &masterFDlist);
 
-    // keep track of the biggest file descriptor
-    fdmax = listen_sock; // so far, it's this one
+    // fdMax used to keep track of the biggest file descriptor
+    fdMax = listen_sock;
 
-    // main loop
-    for (;;) {
-        read_fds = master; // copy it
-        if (select(fdmax + 1, &read_fds, NULL, NULL, NULL) == -1) {
+    // Main loop
+    // Structure inspired by Beej code
+    while (1) {
+        readFDs = masterFDlist;
+        if (select(fdMax + 1, &readFDs, NULL, NULL, NULL) == -1) {
             perror("select");
             exit(4);
         }
 
-        // run through the existing connections looking for data to read
-        for (i = 0; i <= fdmax; i++) {
-            if (FD_ISSET(i, &read_fds)) { // we got one!!
+        // Run through the existing connections looking for data to read
+        for (i = 0; i <= fdMax; i++) {
+            if (FD_ISSET(i, &readFDs)) {
                 if (i == listen_sock) {
-                    // handle new connections
-                    addrlen = sizeof remoteaddr;
-                    newfd = accept(listen_sock, (struct sockaddr *) &remoteaddr, &addrlen);
+                    // Handle new connection
+                    addrLen = sizeof clientAddr;
+                    newFD = accept(listen_sock, (struct sockaddr *) &clientAddr, &addrLen);
 
-                    if (newfd == -1) {
+                    if (newFD == -1) {
                         perror("accept");
                     } else {
-                        FD_SET(newfd, &master); // add to master set
-                        if (newfd > fdmax) {    // keep track of the max
-                            fdmax = newfd;
+                        FD_SET(newFD, &masterFDlist); // Add to master set
+                        if (newFD > fdMax) {
+                            // Update max file descriptor
+                            fdMax = newFD;
                         }
-                        printf("selectserver: new connection from %s on "
+                        printf("Liso: New connection from %s on "
                                        "socket %d\n",
-                               inet_ntop(remoteaddr.ss_family, get_in_addr((struct sockaddr *) &remoteaddr),
-                                         remoteIP, INET6_ADDRSTRLEN), newfd);
+                               inet_ntop(clientAddr.ss_family, get_in_addr((struct sockaddr *) &clientAddr),
+                                         remoteIP, INET6_ADDRSTRLEN), newFD);
                     }
                 } else {
-                    // handle data from a client
-                    if ((nbytes = recv(i, buf, sizeof buf, 0)) <= 0) {
-                        // got error or connection closed by client
-                        if (nbytes == 0) {
-                            // connection closed
-                            printf("selectserver: socket %d hung up\n", i);
+                    // Handle data from a client
+                    if ((retBytes = recv(i, buf, sizeof buf, 0)) <= 0) {
+                        // Error or connection closed by client
+                        if (retBytes == 0) {
+                            // Connection closed
+                            printf("Liso: Socket %d hung up\n", i);
                         } else {
                             perror("recv");
                         }
-                        close(i); // bye!
-                        FD_CLR(i, &master); // remove from master set
+                        close(i);
+                        FD_CLR(i, &masterFDlist); // Clear from master list
                     } else {
-//                        if (FD_ISSET(i, &master)) {
-                        //fprintf(stdout, "Data received from socket %d. He said %s \n", i, buf);
+                        // Received data from a client!
 
                         // Parse Request
-                        Request *request = parse(buf, nbytes, i);
+                        Request *request = parse(buf, retBytes, i);
 
                         // Handle Request
                         if (handle_requests(i, request) < 0) {
+                            // If error, close socket and clear from list
                             close(i);
-                            FD_CLR(i, &master);
+                            FD_CLR(i, &masterFDlist);
                         }
-
-//                        }
                     }
                 }
             }
@@ -203,30 +201,27 @@ int main(int argc, char* argv[]) {
 
 
 int handle_requests(int i, Request *request) {
+    // Determine if HTTP version is supported
     if (!strcasecmp(request->http_version, "HTTP/1.1")) {
+        // Determine which method to call
         if (!strcasecmp(request->http_method, "GET")) {
-            fprintf(stdout, "You (%d) said %s \n", i, request->http_method);
             if (doGET(i, request) < 0) {
                 return -1;
             }
             return 1;
         } else if (!strcasecmp(request->http_method, "HEAD")) {
-            fprintf(stdout, "You (%d) said %s \n", i, request->http_method);
             if (doHEAD(i, request) < 0) {
                 return -1;
             }
             return 1;
         } else if (!strcasecmp(request->http_method, "POST")) {
-            fprintf(stdout, "You (%d) said %s \n", i, request->http_method);
             doPOST(i, request);
             return 1;
         } else {
-            fprintf(stdout, "501 Not Implemented HTTP method is not implemented by the server\n");
             handleError(i, 501, request);
             return 1;
         }
     } else {
-        fprintf(stdout, "505 HTTP version is not supported by the server\n");
         handleError(i, 505, request);
         return 1;
     }
@@ -238,7 +233,6 @@ int doGET(int i, Request *request) {
     char fullPath[256];
     char *filePtr;
     int fd, filesize;
-
 
     // Decide which path to look at
     if (!strcmp(request->http_uri, "/")) {
@@ -273,7 +267,7 @@ int doGET(int i, Request *request) {
     // Send to client
     send(i, filePtr, filesize, 0);
 
-    // Memory unmap to reclaim space.
+    // Memory unmap to reclaim space
     munmap(filePtr, filesize);
 
     return 1;
@@ -286,7 +280,6 @@ int doHEAD(int i, Request *request) {
     char content_type[1024];
     char fullPath[256];
     struct stat fileinfo;
-
 
     // Decide which path to look at
     if (!strcmp(request->http_uri, "/")) {
@@ -310,10 +303,8 @@ int doHEAD(int i, Request *request) {
     // Get date
     get_time(date);
 
-
     // Get content type
     getContentType(request->http_uri, content_type);
-
 
     // Get last modified
     char lastModTime[512];
@@ -321,9 +312,7 @@ int doHEAD(int i, Request *request) {
     temp = *gmtime(&fileinfo.st_mtime);
     strftime(lastModTime, 64, "%a, %d %b %Y %H:%M:%S GMT", &temp);
 
-
     // Print to buffer and send to file descriptor
-
     sprintf(respBuf, "HTTP/1.1 200 OK\r\n");
     sprintf(respBuf + strlen(respBuf), "Server: Liso/1.0\r\n");
     sprintf(respBuf + strlen(respBuf), "Date: %s\r\n", date);
@@ -341,6 +330,7 @@ int doHEAD(int i, Request *request) {
 
 
 void getContentType(char *file_string, char *content_type) {
+    // Match file string to various file types to determine content type
     if (strstr(file_string, ".html"))
         strcpy(content_type, "text/html");
     else if (strstr(file_string, ".css"))
@@ -405,37 +395,44 @@ void get_time(char *date){
 
 
 void argError(void) {
-    fprintf(stderr, "usage: ./echo_server <HTTP port> <log file> <www folder>\n");
+    fprintf(stderr, "usage: ./lisod <HTTP port> <log file> <www folder>\n");
     exit(EXIT_FAILURE);
 }
 
 
 void handleError(int fd, int error_num, Request *request) {
-    // retrieve date initialize the buffers.
     char date[35];
     char error_buf[1024];
     char out[1024];
+
+    // Retrieve date
     get_time(date);
 
     // Get message based on error id
     switch(error_num) {
         case 400:
             sprintf(out, "Bad Request. \n");
+            addToLog(logfilename, "Error 400: Bad Request. \n");
             break;
         case 404:
             sprintf(out, "Not Found. \n");
+            addToLog(logfilename, "Error 404: Not Found. \n");
             break;
         case 500:
             sprintf(out, "Internal Server Error. \n");
+            addToLog(logfilename, "Error 500: Internal Server Error. \n");
             break;
         case 501:
-            sprintf(out, "Do you see this: Not Implemented. \n");
+            sprintf(out, "Not Implemented. \n");
+            addToLog(logfilename, "Error 501: Not Implemented. \n");
             break;
         case 505:
             sprintf(out, "HTTP Version Not Supported. \n");
+            addToLog(logfilename, "Error 505: HTTP Version Not Supported. \n");
             break;
         default:
             sprintf(out, "Unknown Error.\n");
+            addToLog(logfilename, "Error: Unknown Error. \n");
             break;
     }
 
@@ -444,11 +441,12 @@ void handleError(int fd, int error_num, Request *request) {
     sprintf(error_buf, "%sDate: %s\r\n", error_buf, date);
     sprintf(error_buf, "%sContent-Length: %ld\r\n", error_buf, strlen(out));
     sprintf(error_buf, "%sContent-Type: text/html\r\n\r\n", error_buf);
+
+    // Send message to client
     send(fd, error_buf, strlen(error_buf), 0);
-    fprintf(stdout, "ERROR sent to the Client!\n");
 }
 
-// get sockaddr, IPv4 or IPv6:
+// Get socket address, IPv4 or IPv6:
 void *get_in_addr(struct sockaddr *sa) {
     if (sa->sa_family == AF_INET) {
         return &(((struct sockaddr_in*)sa)->sin_addr);

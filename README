@@ -1,73 +1,52 @@
 ################################################################################
 # README                                                                       #
 #                                                                              #
-# Description: This file serves as a README and documentation for CP1 starter. #
+# Description: HTTP/1.1 server implemented in C for Cornell's Networked        #
+#              and Distributed Systems course (CS5450). Can handle multiple    #
+#              clients and serve static files using GET, HEAD, and POST        #
+#              requests. Also logs errors in a log file.                       #
 #                                                                              #
-# Authors: Athula Balachandran <abalacha@cs.cmu.edu>,                          #
-#          Wolf Richter <wolf@cs.cmu.edu>                                      #
-#          Eugene Bagdasaryan <ebagdasa@cs.cornell.edu>                        #
+# Authors: Jake Magid <jm2644@cornell.edu>,                                    #
+#          Fani Maksakuli <fm399@cornell.edu>                                  #
 #                                                                              #
 ################################################################################
 
+A HTTP/1.1 server implemented in C using socket programming.
+
+Supports HEAD, GET, POST, serve static file, log.
 
 
-
-[TOC-1] Table of Contents
+Description of Files
 --------------------------------------------------------------------------------
 
-        [TOC-1] Table of Contents
-        [DES-2] Description of Files
-        [RUN-3] How to Run
-
-
-
-
-[DES-2] Description of Files
---------------------------------------------------------------------------------
-
-Here is a listing of all files associated with Recitation 1 and what their'
+Here is a listing of all files associated with the project and what their
 purpose is:
 
-                    .../README                  - Current document 
-                    .../src/echo_client.c       - Simple echo network client
-                    .../src/echo_server.c       - Simple echo network server
-                    .../src/Makefile            - Contains rules for make
-                    .../src/cp1_checker.py      - Python test script for CP1
+                    .../README              - Current document
+                    .../echo_client.c       - Simple echo network client
+                    .../echo_server.c       - Simple echo network server
+                    .../Makefile            - Contains rules for make
+                    .../cp1_checker.py      - Python test script for CP1
+                    .../lexer.l             - Parser implementation
+                    .../parse.c             - Parser implementation
+                    .../parse.h             - Parser implementation
+                    .../parser.y            - Parser implementation
+                    .../autolab_scripts/    - Autograder functions
 
 
-
-
-[RUN-3] How to Run
+How to Run
 --------------------------------------------------------------------------------
 
-Building and executing the echo code should be very simple:
+To run the server first make, then call ./lisod with three arguments. Echo
+client can be used to connect to the server given the port number. Make clean
+can then remove the compiled files.
 
-                    cd src
+                    cd project-1/
                     make
-                    ./echo_server
-                    ./echo_client localhost 9999
+                    ./lisod <HTTP port> <log file> <www folder>
+                    ./echo_client localhost <HTTP port>
 
-This should allow you to input characters on stdin which will be sent to the
-echo server.  The echo server has a hard-coded serving port of 9999.  Any input
-characters to stdin will be flushed to the server on return, and any bytes
-received from the server will appear on stdout.
-
-In addition, a telnet client may also be used in a similar fashion for
-communicating with the server:
-
-                    cd src
-                    make
-                    ./echo_server
-                    telnet localhost 9999
-
-The test Python script takes a series of arguments and can be run as:
-
-                    cd src
-                    make
-                    ./echo_server
-                    ./cp1_checker 127.0.0.1 9999 1000 10 2048 500
-
-with arguments as such:
-
-                    <ip> <port> <# trials> <# writes and reads per trial> \
-                    <max # bytes to write at a time> <# connections> 
+Instead of running echo_client, a curl request to the localhost address and port
+can be used to execute GET, HEAD, or POST. Also the program Postman can be used.
+When running inside a Docker container, ensure the container exposes the HTTP
+ports to be able to use the Postman application on your machine's localhost.

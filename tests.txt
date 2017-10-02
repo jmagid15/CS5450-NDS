@@ -1,0 +1,18 @@
+Networked and Distributed Systems (CS5450)
+Jake Magid
+Fani Maksakuli
+
+Testing methods:
+* The server was compiled and run throughout the development process. We utilized curl requests and Postman to test functionality.
+* Many fprintf statements were used to track the program's progress and debug various issues
+* Returns of curl requests with and without the "-i" term helped understand program output
+* Utilized standalone methods of implementing parser to ensure that provided parser code would work on realistic requests. Some modifications to parser were required.
+* The autograder scripts were run to ensure our program would pass with the expected outputs. This also helped ensure proper error handling.
+
+
+Vulnerabilities:
+* No logging of data on a backend
+* No security measures implemented
+* Only serves static files within www folder
+* Cannot service more than 1020 (1024 - 4 standard) connections
+* Source code is open source
